@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Atomic 25 - Labels & Ghost</title>
+    <title>Atomic 25 - Fix Reset</title>
     <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
         #ui-panel {
@@ -17,12 +17,11 @@
         .element-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 10px; }
         .el-btn { height: 42px; border: none; cursor: pointer; border-radius: 6px; font-weight: bold; font-size: 11px; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         .active { outline: 3px solid #00ffcc; box-shadow: 0 0 10px #00ffcc; }
-        #clear-btn { width: 100%; min-height: 35px; background: #ff4444; color: #fff; border: none; border-radius: 6px; font-weight: bold; }
+        #clear-btn { width: 100%; min-height: 35px; background: #ff4444; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
         .info { font-size: 10px; color: #00ffcc; text-align: center; margin-top: 8px; }
-        /* 電荷ラベル用のスタイル */
         .atom-label {
             color: white; font-family: sans-serif; font-weight: bold; font-size: 12px;
-            text-shadow: 1px 1px 2px black; pointer-events: none; white-space: nowrap;
+            text-shadow: 1px 1px 2px black; pointer-events: none;
         }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
@@ -33,7 +32,7 @@
 <div id="ui-panel">
     <div class="scroll-area"><div class="element-grid" id="grid"></div></div>
     <button id="clear-btn" onclick="clearAtoms()">全部リセット</button>
-    <div class="info">25元素搭載。電荷表示を固定しました。<br>ゴーストに合わせてタップで生成！</div>
+    <div class="info">リセット時にラベルも消えるよう修正しました。</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -66,7 +65,6 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // ラベル用レンダラーの設定
     const labelRenderer = new THREE.CSS2DRenderer();
     labelRenderer.setSize(window.innerWidth, window.innerHeight);
     labelRenderer.domElement.style.position = 'absolute';
@@ -104,7 +102,17 @@
         uiGrid.appendChild(btn);
     });
 
-    function clearAtoms() { atoms.forEach(a => { scene.remove(a.mesh); scene.remove(a.label); }); atoms = []; }
+    // --- 修正されたクリア関数 ---
+    function clearAtoms() {
+        atoms.forEach(a => {
+            scene.remove(a.mesh);
+            // ラベル要素をDOMからも物理的に消す
+            if (a.label.element && a.label.element.parentNode) {
+                a.label.element.parentNode.removeChild(a.label.element);
+            }
+        });
+        atoms = [];
+    }
 
     class Atom {
         constructor(type, pos) {
@@ -113,16 +121,15 @@
             this.connections = [];
             this.mesh = new THREE.Mesh(new THREE.SphereGeometry(this.r, 16, 16), new THREE.MeshStandardMaterial({color:d.c, roughness:0.2, metalness:0.3}));
             this.mesh.position.copy(pos);
-            this.vel = new THREE.Vector3();
             
-            // 電荷ラベルの作成
             const div = document.createElement('div');
             div.className = 'atom-label';
             div.textContent = `${type}(${d.q>0?'+':''}${d.q})`;
             this.label = new THREE.CSS2DObject(div);
             this.label.position.set(0, this.r + 0.3, 0);
-            this.mesh.add(this.label); // メッシュに追従させる
+            this.mesh.add(this.label);
             
+            this.vel = new THREE.Vector3();
             scene.add(this.mesh);
         }
     }
@@ -208,7 +215,7 @@
         atoms.forEach(a => { a.mesh.position.add(a.vel); a.vel.multiplyScalar(0.93); });
         controls.update();
         renderer.render(scene, camera);
-        labelRenderer.render(scene, camera); // ラベルの描画
+        labelRenderer.render(scene, camera);
     }
     animate();
 </script>
