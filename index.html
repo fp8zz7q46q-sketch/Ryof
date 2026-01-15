@@ -1,223 +1,235 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Atomic 25 - Fix Reset</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Pressure Point Physics</title>
     <style>
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
-        #ui-panel {
-            position: absolute; top: 5px; left: 5px;
-            background: rgba(0, 0, 0, 0.9); padding: 8px;
-            border-radius: 12px; color: #fff; border: 1px solid #555;
-            width: 300px; z-index: 1000; font-family: sans-serif;
-            max-height: 90vh; display: flex; flex-direction: column;
+        body { font-family: -apple-system, sans-serif; background: #000; color: white; margin: 0; height: 100vh; overflow: hidden; touch-action: none; }
+        #simCanvas { background: #000; width: 100%; height: 100vh; touch-action: none; display: block; }
+        .overlay-stats {
+            position: absolute; top: 10px; left: 10px; pointer-events: none;
+            background: rgba(0,0,0,0.7); padding: 12px; border-radius: 10px; font-size: 11px;
+            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); z-index: 80;
         }
-        .scroll-area { overflow-y: auto; flex-grow: 1; padding-right: 5px; }
-        .element-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 10px; }
-        .el-btn { height: 42px; border: none; cursor: pointer; border-radius: 6px; font-weight: bold; font-size: 11px; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .active { outline: 3px solid #00ffcc; box-shadow: 0 0 10px #00ffcc; }
-        #clear-btn { width: 100%; min-height: 35px; background: #ff4444; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
-        .info { font-size: 10px; color: #00ffcc; text-align: center; margin-top: 8px; }
-        .atom-label {
-            color: white; font-family: sans-serif; font-weight: bold; font-size: 12px;
-            text-shadow: 1px 1px 2px black; pointer-events: none;
+        #menuToggle {
+            position: absolute; top: 10px; right: 10px; width: 50px; height: 50px;
+            background: rgba(0, 123, 255, 0.9); border: none; border-radius: 50%;
+            color: white; font-size: 24px; z-index: 110; cursor: pointer;
         }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
+        .side-panel {
+            position: absolute; top: 0; right: -280px; width: 260px; height: 100vh;
+            background: rgba(15, 15, 15, 0.98); backdrop-filter: blur(20px);
+            transition: right 0.3s ease; border-left: 1px solid #444; z-index: 100;
+            display: flex; flex-direction: column;
+        }
+        .side-panel.open { right: 0; }
+        .panel-content { flex: 1; overflow-y: auto; padding: 80px 20px 40px; display: flex; flex-direction: column; gap: 15px; }
+        .toggle-item { display: flex; align-items: center; justify-content: space-between; background: #222; padding: 10px; border-radius: 8px; font-size: 12px; }
+        input[type=range] { width: 100%; height: 30px; accent-color: #007bff; cursor: pointer; }
+        button { padding: 14px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; font-size: 13px; margin-top: 5px; }
     </style>
 </head>
 <body>
 
-<div id="ui-panel">
-    <div class="scroll-area"><div class="element-grid" id="grid"></div></div>
-    <button id="clear-btn" onclick="clearAtoms()">全部リセット</button>
-    <div class="info">リセット時にラベルも消えるよう修正しました。</div>
-</div>
+    <div class="overlay-stats">
+        <div>粒子: <span id="totalDisplay">0</span></div>
+        <div style="color:#ffcc00; font-weight: bold;">全体圧力: <span id="pressDisplay">0</span></div>
+        <div id="localPressArea" style="color:#00ccff; font-weight: bold; margin-top: 5px; display:none;">
+            指先圧力: <span id="localPressDisplay">0</span>
+        </div>
+    </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+    <button id="menuToggle" onclick="toggleMenu()">☰</button>
 
-<script>
-    const ELEMENT_DATA = {
-        'H':  {c:0xffffff, r:0.4, h:1, q:1},   'He': {c:0xffc0cb, r:0.4, h:0, q:0},
-        'Li': {c:0xcc80ff, r:0.5, h:1, q:1},   'Be': {c:0xc2ff00, r:0.4, h:2, q:2},
-        'B':  {c:0xffb5b5, r:0.6, h:3, q:3},   'C':  {c:0x555555, r:0.7, h:4, q:4},
-        'N':  {c:0x3050f8, r:0.7, h:3, q:3},   'O':  {c:0xff0d0d, r:0.6, h:2, q:-2},
-        'F':  {c:0x90e050, r:0.5, h:1, q:-1},  'Ne': {c:0xb3e3f5, r:0.5, h:0, q:0},
-        'Na': {c:0xab5cf2, r:0.9, h:1, q:1},   'Mg': {c:0x8aff00, r:0.8, h:2, q:2},
-        'Al': {c:0xbfa6a6, r:0.9, h:3, q:3},   'Si': {c:0xf0c8a0, r:1.0, h:4, q:4},
-        'P':  {c:0xff8000, r:0.9, h:3, q:5},   'S':  {c:0xffff30, r:0.9, h:2, q:-2},
-        'Cl': {c:0x1ff01f, r:0.8, h:1, q:-1},  'Ar': {c:0x80d1e3, r:0.8, h:0, q:0},
-        'K':  {c:0x8f40d4, r:1.1, h:1, q:1},   'Ca': {c:0x3dffba, r:1.0, h:2, q:2},
-        'Ti': {c:0xbfc2c7, r:1.0, h:4, q:4},   'Fe': {c:0xe06633, r:1.0, h:3, q:3},
-        'Cu': {c:0xc88033, r:1.0, h:2, q:2},   'Ag': {c:0xc0c0c0, r:1.1, h:1, q:1},
-        'Au': {c:0xffd700, r:1.1, h:1, q:1}
-    };
+    <div id="sidePanel" class="side-panel">
+        <div class="panel-content">
+            <div class="toggle-item"><span>スローモーション</span><input type="checkbox" id="slowCheck"></div>
+            <div class="toggle-item"><span>軌跡を表示</span><input type="checkbox" id="trailCheck"></div>
+            <div style="font-size:10px; color:#666;">スライダーで環境を調整</div>
+            <input type="range" id="maxCountSlider" min="50" max="600" value="300">
+            <input type="range" id="sliderGravity" min="0" max="100" value="15">
+            <input type="range" id="sliderDown" min="5" max="100" value="40">
+            <input type="range" id="sliderUp" min="1" max="100" value="30">
+            <button onclick="toggleWall()" id="wallBtn" style="background:#28a745; color:white;">仕切り ON/OFF</button>
+            <button onclick="resetSim()" style="background: #881111; color: white;">全リセット</button>
+        </div>
+    </div>
 
-    let atoms = [], currentType = 'H';
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 10, 20);
+    <canvas id="simCanvas"></canvas>
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        let particles = [], wallY = 0, isWallActive = true, isDraggingWall = false, draggedParticle = null;
+        let pressure = 0, localPressure = 0, lastSpawnTime = 0, touchPos = {x:0, y:0};
+        const wallThickness = 25;
 
-    const labelRenderer = new THREE.CSS2DRenderer();
-    labelRenderer.setSize(window.innerWidth, window.innerHeight);
-    labelRenderer.domElement.style.position = 'absolute';
-    labelRenderer.domElement.style.top = '0px';
-    labelRenderer.domElement.style.pointerEvents = 'none';
-    document.body.appendChild(labelRenderer.domElement);
+        function resize() {
+            const ratio = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * ratio;
+            canvas.height = window.innerHeight * ratio;
+            if (wallY === 0) wallY = canvas.height / 2;
+        }
 
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+        function toggleMenu() {
+            const panel = document.getElementById('sidePanel');
+            panel.classList.toggle('open');
+            document.getElementById('menuToggle').innerText = panel.classList.contains('open') ? '✕' : '☰';
+        }
 
-    scene.add(new THREE.AmbientLight(0xcccccc));
-    const light = new THREE.PointLight(0xffffff, 1);
-    light.position.set(20, 30, 20);
-    scene.add(light);
-    scene.add(new THREE.GridHelper(80, 40, 0x444444, 0x222222));
+        class Particle {
+            constructor(area, mode) {
+                this.baseR = 4; this.r = 4; this.isFixed = false;
+                this.spawn(area, mode);
+            }
+            spawn(area, mode) {
+                this.x = Math.random() * (canvas.width - 60) + 30;
+                if (mode === 'heatSource') {
+                    this.y = canvas.height - 30;
+                    this.vy = -parseFloat(document.getElementById('sliderDown').value) * 0.5;
+                    this.vx = (Math.random() - 0.5) * 15;
+                } else {
+                    this.y = 70; this.vy = 2; this.vx = (Math.random() - 0.5) * 5;
+                }
+            }
+            update(dt) {
+                if (this.isFixed || this === draggedParticle) return;
+                const grav = parseFloat(document.getElementById('sliderGravity').value);
+                const cold = parseFloat(document.getElementById('sliderUp').value);
+                this.vy += (grav / 100) * dt;
+                if (this.y < 130) {
+                    const cool = (cold / 1000) * dt;
+                    this.vx *= (1 - cool); this.vy *= (1 - cool);
+                    if (this.vx*this.vx + this.vy*this.vy < 0.04) { this.isFixed = true; this.vx = 0; this.vy = 0; }
+                }
+                const speed = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+                this.r = this.baseR + (speed * 0.35);
+                if (this.r > 22) this.r = 22;
+                let nX = this.x + this.vx * dt, nY = this.y + this.vy * dt;
+                if (nX < this.r) { nX = this.r; this.vx = Math.abs(this.vx); pressure += this.vx; }
+                else if (nX > canvas.width - this.r) { nX = canvas.width - this.r; this.vx = -Math.abs(this.vx); pressure += Math.abs(this.vx); }
+                if (nY < this.r) { nY = this.r; this.vy = Math.abs(this.vy); pressure += this.vy; }
+                else if (nY > canvas.height - this.r) { 
+                    const h = parseFloat(document.getElementById('sliderDown').value);
+                    nY = canvas.height - this.r; this.vy = -h * (0.4 + Math.random() * 0.4); pressure += Math.abs(this.vy);
+                }
+                if (isWallActive) {
+                    const hT = wallThickness / 2;
+                    if (nY + this.r > wallY - hT && nY - this.r < wallY + hT) {
+                        if (this.y < wallY) { nY = wallY - hT - this.r; this.vy = -Math.abs(this.vy) * 0.95; }
+                        else { nY = wallY + hT + this.r; this.vy = Math.abs(this.vy) * 0.95; }
+                        pressure += Math.abs(this.vy);
+                    }
+                }
+                this.x = nX; this.y = nY;
+            }
+            draw() {
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, 7);
+                const s = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+                ctx.fillStyle = this.isFixed ? "#ffffff" : `hsl(${Math.max(0, 240 - s * 12)}, 90%, 60%)`;
+                ctx.fill();
+            }
+        }
 
-    const ghostGeo = new THREE.SphereGeometry(1, 16, 16);
-    const ghostMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.4, wireframe: true, color: 0x00ffcc });
-    const ghostMesh = new THREE.Mesh(ghostGeo, ghostMat);
-    scene.add(ghostMesh);
+        function resolveCollision(p1, p2) {
+            const dx = p2.x - p1.x, dy = p2.y - p1.y, dist = Math.sqrt(dx*dx + dy*dy);
+            const minDist = p1.r + p2.r;
+            if (dist < minDist && dist > 0) {
+                const nx = dx/dist, ny = dy/dist, vDiff = (p1.vx - p2.vx)*nx + (p1.vy - p2.vy)*ny;
+                if (vDiff > 0) {
+                    const e = 0.95; p1.vx -= vDiff*nx*e; p1.vy -= vDiff*ny*e; p2.vx += vDiff*nx*e; p2.vy += vDiff*ny*e;
+                }
+                const overlap = (minDist - dist) / 2;
+                p1.x -= nx * overlap; p1.y -= ny * overlap; p2.x += nx * overlap; p2.y += ny * overlap;
+                if (p1.isFixed || p2.isFixed) { p1.isFixed = p2.isFixed = false; }
+            }
+        }
 
-    const uiGrid = document.getElementById('grid');
-    Object.keys(ELEMENT_DATA).forEach(key => {
-        const d = ELEMENT_DATA[key];
-        const btn = document.createElement('button');
-        btn.className = 'el-btn' + (key==='H'?' active':'');
-        btn.style.background = '#' + d.c.toString(16).padStart(6,'0');
-        btn.innerHTML = `<div>${key}</div><div style="font-size:7.5px; opacity:0.7">${d.q>0?'+':''}${d.q}</div>`;
-        btn.onclick = (e) => { 
-            e.stopPropagation(); currentType = key; 
-            document.querySelectorAll('.el-btn').forEach(b=>b.classList.remove('active')); 
-            btn.classList.add('active'); 
-            ghostMesh.scale.setScalar(ELEMENT_DATA[key].r);
+        const getPos = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const t = e.touches ? e.touches[0] : e;
+            return { x: (t.clientX - rect.left) * (canvas.width/rect.width), y: (t.clientY - rect.top) * (canvas.height/rect.height) };
         };
-        uiGrid.appendChild(btn);
-    });
 
-    // --- 修正されたクリア関数 ---
-    function clearAtoms() {
-        atoms.forEach(a => {
-            scene.remove(a.mesh);
-            // ラベル要素をDOMからも物理的に消す
-            if (a.label.element && a.label.element.parentNode) {
-                a.label.element.parentNode.removeChild(a.label.element);
+        canvas.addEventListener('touchstart', e => {
+            const p = getPos(e); touchPos = p;
+            draggedParticle = particles.find(pt => Math.hypot(pt.x - p.x, pt.y - p.y) < 60);
+            if (draggedParticle) { draggedParticle.isFixed = false; document.getElementById('localPressArea').style.display = 'block'; }
+            else if (isWallActive && Math.abs(p.y - wallY) < 60) { isDraggingWall = true; document.getElementById('localPressArea').style.display = 'block'; }
+            if (!document.getElementById('sidePanel').classList.contains('open')) e.preventDefault();
+        }, { passive: false });
+
+        window.addEventListener('touchmove', e => {
+            const p = getPos(e); touchPos = p;
+            if (draggedParticle) {
+                const oldX = draggedParticle.x, oldY = draggedParticle.y;
+                draggedParticle.x = p.x; draggedParticle.y = p.y;
+                draggedParticle.vx = (p.x - oldX) * 0.8; draggedParticle.vy = (p.y - oldY) * 0.8;
+                localPressure = Math.hypot(draggedParticle.vx, draggedParticle.vy) * 5;
+                pressure += localPressure;
+            } else if (isDraggingWall) {
+                const oldY = wallY; wallY = Math.max(80, Math.min(canvas.height - 80, p.y));
+                localPressure = Math.abs(wallY - oldY) * (particles.length / 8);
+                pressure += localPressure;
             }
+            if (!document.getElementById('sidePanel').classList.contains('open')) e.preventDefault();
+        }, { passive: false });
+
+        window.addEventListener('touchend', () => { 
+            draggedParticle = null; isDraggingWall = false; 
+            document.getElementById('localPressArea').style.display = 'none';
         });
-        atoms = [];
-    }
 
-    class Atom {
-        constructor(type, pos) {
-            const d = ELEMENT_DATA[type];
-            this.type = type; this.r = d.r; this.maxHands = d.h; this.charge = d.q;
-            this.connections = [];
-            this.mesh = new THREE.Mesh(new THREE.SphereGeometry(this.r, 16, 16), new THREE.MeshStandardMaterial({color:d.c, roughness:0.2, metalness:0.3}));
-            this.mesh.position.copy(pos);
-            
-            const div = document.createElement('div');
-            div.className = 'atom-label';
-            div.textContent = `${type}(${d.q>0?'+':''}${d.q})`;
-            this.label = new THREE.CSS2DObject(div);
-            this.label.position.set(0, this.r + 0.3, 0);
-            this.mesh.add(this.label);
-            
-            this.vel = new THREE.Vector3();
-            scene.add(this.mesh);
-        }
-    }
+        function toggleWall() { isWallActive = !isWallActive; document.getElementById('wallBtn').style.background = isWallActive ? "#28a745" : "#555"; }
+        function resetSim() { particles = []; resize(); }
 
-    function getGroupInfo(atom, visited = new Set()) {
-        visited.add(atom);
-        let totalCharge = atom.charge;
-        let members = [atom];
-        for (let conn of atom.connections) {
-            if (!visited.has(conn)) {
-                let res = getGroupInfo(conn, visited);
-                totalCharge += res.totalCharge;
-                members = members.concat(res.members);
+        function animate(time) {
+            const dt = document.getElementById('slowCheck').checked ? 0.2 : 1.0;
+            ctx.fillStyle = document.getElementById('trailCheck').checked ? "rgba(0,0,0,0.15)" : "#000";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "rgba(0,120,255,0.12)"; ctx.fillRect(0,0,canvas.width,60);
+            ctx.fillStyle = "rgba(255,50,0,0.12)"; ctx.fillRect(0,canvas.height-15,canvas.width,15);
+
+            document.getElementById('pressDisplay').innerText = Math.floor(pressure);
+            document.getElementById('localPressDisplay').innerText = Math.floor(localPressure);
+            pressure *= 0.94; localPressure *= 0.8;
+
+            const maxVal = parseInt(document.getElementById('maxCountSlider').value);
+            if (time - lastSpawnTime > 160 && particles.length < maxVal) {
+                const mid = isWallActive ? wallY : canvas.height/2;
+                let up = 0; particles.forEach(p => { if (p.y < mid) up++; });
+                particles.push(new Particle(up <= (particles.length-up) ? 'UP' : 'DOWN', up <= (particles.length-up) ? 'cold' : 'heatSource'));
+                lastSpawnTime = time;
             }
-        }
-        return { totalCharge, members };
-    }
+            while(particles.length > maxVal) particles.splice(Math.floor(Math.random()*particles.length), 1);
 
-    let tapStartTime;
-    renderer.domElement.addEventListener('pointerdown', () => { tapStartTime = Date.now(); });
-    renderer.domElement.addEventListener('pointerup', (e) => {
-        if (e.target.closest('#ui-panel')) return;
-        if (Date.now() - tapStartTime < 250) {
-            atoms.push(new Atom(currentType, ghostMesh.position));
-        }
-    });
+            if (isWallActive) {
+                ctx.fillStyle = isDraggingWall ? "#007bff" : "#444";
+                ctx.fillRect(0, wallY - 12, canvas.width, wallThickness);
+            }
 
-    function animate() {
-        requestAnimationFrame(animate);
+            // 指圧のビジュアルエフェクト
+            if (draggedParticle || isDraggingWall) {
+                ctx.beginPath(); ctx.arc(touchPos.x, touchPos.y, 30 + localPressure * 0.5, 0, 7);
+                ctx.strokeStyle = `rgba(0, 200, 255, ${Math.min(0.6, localPressure / 40)})`;
+                ctx.lineWidth = 3; ctx.stroke();
+            }
 
-        const direction = new THREE.Vector3();
-        camera.getWorldDirection(direction);
-        const spawnPos = new THREE.Vector3().copy(camera.position).add(direction.multiplyScalar(8));
-        ghostMesh.position.copy(spawnPos);
-
-        let isOverlapping = false;
-        atoms.forEach(a => { if (ghostMesh.position.distanceTo(a.mesh.position) < (ELEMENT_DATA[currentType].r + a.r)) isOverlapping = true; });
-        ghostMat.color.setHex(isOverlapping ? 0xff4444 : 0x00ffcc);
-
-        let groups = [];
-        let processedAtoms = new Set();
-        atoms.forEach(a => { if (!processedAtoms.has(a)) { let info = getGroupInfo(a); info.members.forEach(m => processedAtoms.add(m)); groups.push(info); } });
-
-        for(let step=0; step<2; step++) {
-            for(let i=0; i<atoms.length; i++) {
-                const a = atoms[i];
-                const groupA = groups.find(g => g.members.includes(a));
-                for(let j=i+1; j<atoms.length; j++) {
-                    const b = atoms[j];
-                    const groupB = groups.find(g => g.members.includes(b));
-                    if (groupA === groupB) continue;
-                    const diff = new THREE.Vector3().subVectors(b.mesh.position, a.mesh.position);
-                    const realDist = diff.length();
-                    const minDist = a.r + b.r;
-                    const distSq = realDist * realDist + 2.0;
-                    let forceMag = -0.012 * (groupA.totalCharge * groupB.totalCharge) / distSq;
-                    if (forceMag > 0 && realDist < minDist * 2.5) {
-                        if (a.connections.length < a.maxHands && b.connections.length < b.maxHands) {
-                            forceMag *= (realDist - minDist) / minDist;
-                            if (realDist < minDist + 0.1 && !a.connections.includes(b)) { a.connections.push(b); b.connections.push(a); }
-                        } else { forceMag = -0.01; }
+            const steps = dt < 1 ? 1 : 2; 
+            for(let s=0; s<steps; s++) {
+                for (let i = 0; i < particles.length; i++) {
+                    const p1 = particles[i];
+                    for (let j = i + 1; j < particles.length; j++) {
+                        if (Math.abs(p1.x - particles[j].x) < 45 && Math.abs(p1.y - particles[j].y) < 45) resolveCollision(p1, particles[j]);
                     }
-                    const force = diff.normalize().multiplyScalar(forceMag);
-                    a.vel.add(force); b.vel.sub(force);
+                    p1.update(dt/steps);
                 }
             }
-            for(let i=0; i<atoms.length; i++) {
-                for(let j=i+1; j<atoms.length; j++) {
-                    const a = atoms[i]; const b = atoms[j];
-                    const diff = new THREE.Vector3().subVectors(b.mesh.position, a.mesh.position);
-                    const dist = diff.length();
-                    const minDist = a.r + b.r;
-                    if (dist < minDist) {
-                        const pushOut = diff.normalize().multiplyScalar((minDist - dist) * 0.52);
-                        a.mesh.position.sub(pushOut); b.mesh.position.add(pushOut);
-                        const dot = (new THREE.Vector3().subVectors(b.vel, a.vel)).dot(diff.normalize());
-                        if (dot < 0) { const imp = diff.normalize().multiplyScalar(dot * 0.6); a.vel.add(imp); b.vel.sub(imp); }
-                    }
-                }
-            }
+            particles.forEach(p => p.draw());
+            document.getElementById('totalDisplay').innerText = particles.length;
+            requestAnimationFrame(animate);
         }
-
-        atoms.forEach(a => { a.mesh.position.add(a.vel); a.vel.multiplyScalar(0.93); });
-        controls.update();
-        renderer.render(scene, camera);
-        labelRenderer.render(scene, camera);
-    }
-    animate();
-</script>
+        window.onload = () => { resize(); animate(0); };
+    </script>
 </body>
 </html>
